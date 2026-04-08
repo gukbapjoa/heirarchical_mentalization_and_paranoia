@@ -84,7 +84,7 @@ class DoMOneBelief(DoMZeroBelief):
                 offer_likelihood[i] = observation_probability
             self.opponent_model.threshold = original_threshold
             # Round up to account for numerical stability issues
-            offer_likelihood = np.round_(offer_likelihood, 4) + 1e-4
+            offer_likelihood = np.round(offer_likelihood, 4) + 1e-4
             return offer_likelihood
         return None
 

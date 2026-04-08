@@ -1,6 +1,5 @@
-numpy~=1.24.4
-typing~=3.7.4.3
-confuse~=2.0.0
-pandas~=1.4.3
-torch~=1.12.1
-tqdm~=4.65.0
+numpy
+confuse
+pandas
+torch
+tqdm

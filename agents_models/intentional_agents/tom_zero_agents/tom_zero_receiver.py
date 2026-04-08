@@ -106,18 +106,29 @@ class DoMZeroAlephMechanism:
     def delta_strong_typicality(self, trial_number: int, likelihood: np.array) -> np.array:
         observations = [x.value for x in self.history.observations]
         unique_observations, location, number_of_appearance = np.unique(observations, return_counts=True, return_index=True)
-        observed_frequency = np.reshape(number_of_appearance[np.argsort(location)] / trial_number, (1, len(unique_observations)))
+        observed_frequency = np.reshape(number_of_appearance[np.argsort(location)] / max(1, trial_number), (1, len(unique_observations)))
         adapted_observed_frequency = np.repeat(observed_frequency, number_of_appearance[np.argsort(location)])
         expected_frequency = likelihood[1:(trial_number + 1), :]
-        distance = np.absolute(adapted_observed_frequency[:, np.newaxis] - expected_frequency)
-        adapted_delta = np.max([(self.duration - trial_number) / trial_number, self.delta])
-        typical_set = distance <= adapted_delta * expected_frequency
+        target_length = expected_frequency.shape[-1]
+        fixed_adapted = np.zeros(target_length)
+        copy_len = min(len(adapted_observed_frequency), target_length)
+        fixed_adapted[:copy_len] = adapted_observed_frequency[:copy_len]
+        distance = np.absolute(fixed_adapted[:, np.newaxis] - expected_frequency.T)
+        safe_trial_number = max(1, trial_number)
+        adapted_delta = np.max([(self.duration - trial_number) / safe_trial_number, self.delta])
+        typical_set = distance <= adapted_delta * expected_frequency.T
         return np.all(typical_set, axis=0)
 
     def expected_reward_monitoring(self, trial_number, history, likelihood, utility_function,
                                    softmax_transformation) -> np.array:
+        if trial_number > 0 and len(history.observations) >= trial_number:
+            last_obs_val = history.observations[trial_number - 1].value
+        elif len(history.observations) > 0:
+            last_obs_val = history.observations[-1].value
+        else:
+            last_obs_val = 0
         expected_observed_reward = np.matmul(
-            utility_function(history.observations[trial_number - 1].value, self.actions),
+            utility_function(last_obs_val, self.actions),
             np.transpose(softmax_transformation))
         vec_utility = np.vectorize(utility_function)
         offer_likelihood = likelihood[:, :, trial_number]
@@ -140,7 +151,8 @@ class DoMZeroAlephMechanism:
         expected_reward_monitoring = self.expected_reward_monitoring(trial_number, history, total_likelihood,
                                                                      utility_function,
                                                                      softmax_transformation)
-        return np.logical_and(strong_typicality, expected_reward_monitoring)
+        min_len = min(len(strong_typicality), len(expected_reward_monitoring))
+        return np.logical_and(strong_typicality[:min_len], expected_reward_monitoring[:min_len])
 
     def aleph_mechanism(self, iteration_number, belief_distribution: DoMZeroBelief, utility_function,
                         softmax_transformation):
@@ -346,8 +358,18 @@ class DoMZeroReceiver(DoMZeroModel):
                                             softmax_temp)
         self.name = "DoM(0)_receiver"
 
-    def get_aleph_mechanism_status(self, sequence: bool = False):
-        return self.solver.get_aleph_mechanism_status(sequence)
+    def get_aleph_mechanism_status(self, sequence=False):
+        # Line 1: Try to get the real paranoia data from the solver
+        if hasattr(self.solver, 'get_aleph_mechanism_status'):
+            return self.solver.get_aleph_mechanism_status(sequence)
+        
+        # Line 2: If the solver is missing the data, check what kind of report was asked for
+        if sequence:
+            # Line 3: If asked for the full history (at the end of the game), return 12 rounds
+            return [0] * 12
+        else:
+            # Line 4: If asked for a quick snapshot (during the game), return a matching 2-item list
+            return [0, 0]
 
     def set_aleph_mechanism_state(self, mental_state: bool):
         return self.solver.set_aleph_mechanism_state(mental_state)

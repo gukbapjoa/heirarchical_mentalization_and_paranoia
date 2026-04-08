@@ -151,7 +151,7 @@ class IPOMCP:
                                                      self.root_sampling.opponent_model.belief.belief_distribution,
                                                      iteration_number)
             nested_belief = self.environment_simulator.opponent_model.belief.get_current_belief()
-            nested_likelihood = self.environment_simulator.opponent_model.belief.likelihood
+            nested_likelihood = getattr(self.environment_simulator.opponent_model.belief, 'likelihood', None)
             interactive_state = InteractiveState(State(str(iteration_number), False), persona, nested_belief, nested_likelihood)
             start_time = time.time()
             _, _, depth = self.simulate(i, interactive_state, self.history_node, 0, self.seed, iteration_number)

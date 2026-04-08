@@ -1,7 +1,7 @@
 from iug_task import *
 from agent_factory import *
 import argparse
-
+import os
 
 def export_beliefs_to_file(data: Union[pd.DataFrame, dict], directory_name, output_directory, nested=False):
     if not nested:
@@ -16,7 +16,9 @@ def export_beliefs_to_file(data: Union[pd.DataFrame, dict], directory_name, outp
     if data is not None:
         if not os.path.exists(outdir):
             os.makedirs(outdir, exist_ok=True)
-        data.to_csv(os.path.join(outdir, output_directory), index=False)
+        # Bypass Windows path limit for belief files too
+        safe_path = "\\\\?\\" + os.path.abspath(os.path.join(outdir, output_directory))
+        data.to_csv(safe_path, index=False)
 
 
 def set_experiment_name(receivers_threshold, senders_threshold):
@@ -40,8 +42,17 @@ def simulate_iug_task(sender_agent, receiver_agent, senders_threshold, receivers
     experiment_name = config.experiment_name
     if config.args.save_results == "True":
         output_file_name = f'{experiment_name}_seed_{config.seed}.csv'
-        experiment_results.to_csv(config.simulation_results_dir + "/" + output_file_name, index=False)
-        q_values.to_csv(config.q_values_results_dir + "/" + output_file_name, index=False)
+        
+       # 1. Force the computer to create both folders before saving
+        os.makedirs(config.simulation_results_dir, exist_ok=True)
+        os.makedirs(config.q_values_results_dir, exist_ok=True)
+        
+        # 2. Safely save the files by bypassing the Windows path length limit
+        sim_path = "\\\\?\\" + os.path.abspath(os.path.join(config.simulation_results_dir, output_file_name))
+        q_path = "\\\\?\\" + os.path.abspath(os.path.join(config.q_values_results_dir, output_file_name))
+        experiment_results.to_csv(sim_path, index=False)
+        q_values.to_csv(q_path, index=False)
+        
         export_beliefs_to_file(receiver_belief, 'receiver_beliefs', output_file_name)
         export_beliefs_to_file(sender_belief, 'sender_beliefs', output_file_name)
         export_beliefs_to_file(receiver_mental_state, 'receiver_mental_state', output_file_name)

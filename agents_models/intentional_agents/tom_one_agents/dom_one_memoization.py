@@ -1,4 +1,4 @@
-from pandas.core.base import DataError
+from pandas.errors import DataError
 from Solver.utils.memoization_table import *
 import os
 from os.path import exists

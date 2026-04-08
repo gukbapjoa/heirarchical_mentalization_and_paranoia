@@ -31,7 +31,7 @@ class Config(object):
         number_of_rational_agents = self.get_from_general("number_of_rational_agents")
         sender_tom = self.args.sender_tom
         receiver_tom = self.args.receiver_tom
-        environment_name = f'{receiver_tom}_receiver_{sender_tom}_sender_softmax_temp_{self.args.softmax_temp}'
+        environment_name = f'R_{receiver_tom}_S_{sender_tom}_softmax_temp_{self.args.softmax_temp}'
         which_senders = self._infer_senders_types()
         self.environment_name = f'{environment_name}_{which_senders}'
         experiment_path = os.path.join(str(path_prefix), self.env, f'{number_of_rational_agents}_rational_agents',
@@ -145,7 +145,7 @@ class Config(object):
             random_agent = False
         if self.get_from_general("skip_rational"):
             rational_agent = False
-        return f'random_sender_included_{random_agent}_rational_sender_included_{rational_agent}'
+        return f'rand_{random_agent}_rat_{rational_agent}'
 
 
 _config = None

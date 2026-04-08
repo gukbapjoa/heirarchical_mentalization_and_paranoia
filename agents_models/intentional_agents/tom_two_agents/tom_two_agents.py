@@ -310,7 +310,7 @@ class DoMTwoReceiver(DoMZeroReceiver):
                  prior_belief: np.array,
                  opponent_model: Optional[Union[DoMOneSender, DoMZeroSender, SubIntentionalAgent]],
                  seed: int, task_duration):
-        super().__init__(actions, softmax_temp, threshold, prior_belief, opponent_model, seed, task_duration)
+        super().__init__(actions, softmax_temp, threshold, prior_belief, opponent_model, seed, task_duration, True, 0.1, 0.95)
         self._planning_parameters = dict(seed=seed, threshold=self._threshold)
         self.memoization_table = memoization_table
         self.belief = DoMTwoBelief(prior_belief, self.opponent_model, self.history, True)
