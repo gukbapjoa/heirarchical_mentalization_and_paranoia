@@ -25,10 +25,10 @@ environments:
     mcts_number_of_iterations: 25000
     discount_factor: 0.99
     endowment: 1.0
-    break_down_policy: False
-    active_detection_mechanism: False
+    break_down_policy: False              # Check
+    active_detection_mechanism: False     # Check
     subintentional_type: softmax
-    subintentional_weight: -0.95
+    subintentional_weight: -0.95 
   aleph_ipomdp:
     n_trials: 12
     planning_depth: 12
@@ -37,7 +37,7 @@ environments:
     mcts_number_of_iterations: 25000
     discount_factor: 0.99
     endowment: 1.0
-    break_down_policy: True
-    active_detection_mechanism: True
+    break_down_policy: True               # Check
+    active_detection_mechanism: True      # Check
     subintentional_type: softmax
     subintentional_weight: -0.95

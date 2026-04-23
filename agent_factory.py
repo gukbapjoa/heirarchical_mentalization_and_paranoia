@@ -52,6 +52,7 @@ class AgentFactory:
             agent = self.dom_two_constructor(agent_role)
         return agent
 
+    # Coding for DoM(-1) Sender or DoM(-1) Receiver
     def dom_minus_one_constructor(self, agent_role):
         if agent_role == "rational_sender":
             if self.config.subintentional_agent_type == "uniform":
@@ -64,6 +65,7 @@ class AgentFactory:
             agent = SubIntentionalReceiver(self.subject_actions, self.softmax_temp)
         return agent
 
+    # Coding for DoM(0) Sender  or Dom(0) Receiver
     def dom_zero_constructor(self, agent_role, aleph_ipomdp_activated: bool = True):
         if agent_role == "rational_sender":
             opponent_model = self.dom_minus_one_constructor("rational_receiver")
@@ -81,6 +83,7 @@ class AgentFactory:
                                            self.aleph_ipomdp_omega_parameter)
         return output_agent
 
+    # Coding for DoM(1) Sender
     def dom_one_constructor(self, agent_role, nested=False):
         if agent_role == "rational_sender":
             opponent_model = self.dom_zero_constructor("rational_receiver")
@@ -93,7 +96,7 @@ class AgentFactory:
             output_agent = None
             raise NotImplementedError('Missing implementation')
         return output_agent
-
+    # Coding for DoM(2) Receiver
     def dom_two_constructor(self, agent_role):
         opponent_model = self.dom_one_constructor("rational_sender", True)
         opponent_theta_hat_distribution = self._create_prior_distribution(self.sender_theta)

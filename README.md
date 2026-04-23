@@ -19,7 +19,7 @@ python3 main.py
 
 This function takes multiple arguments as input:
 ```
---environment (str): set to IPOMDP
+--environment (str): set to aleph_idomdp
  
 --seed: (int) for reproducibility
 

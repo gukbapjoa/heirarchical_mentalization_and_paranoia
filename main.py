@@ -68,8 +68,8 @@ if __name__ == "__main__":
                         help='set rational_sender tom level (default: DoM0)')
     parser.add_argument('--receiver_tom', type=str, default='DoM0', metavar='N',
                         help='set rational_receiver tom level (default: DoM0)')
-    parser.add_argument('--softmax_temp', type=float, default='0.05', metavar='N',
-                        help='set softmax temp (default: 0.05)')
+    parser.add_argument('--softmax_temp', type=float, default='0.01', metavar='N',
+                        help='set softmax temp (default: 0.01)')
     parser.add_argument('--senders_threshold', type=float, default='0.0', metavar='N',
                         help='set senders threshold (default: 0.0)')
     parser.add_argument('--receivers_threshold', type=float, default='0.0', metavar='N',
