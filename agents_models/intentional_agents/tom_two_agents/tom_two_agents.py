@@ -342,3 +342,202 @@ class DoMTwoReceiver(DoMZeroReceiver):
         # update nested DoM(-1) observations
         self.opponent_model.opponent_model.opponent_model.history.observations.append(action)
 
+# =============================================================================
+# DoMTwoSender (S2): models a DoMOneReceiver (R1) opponent.
+# Mirrors DoMTwoReceiver in depth, but from the Sender's perspective.
+# =============================================================================
+
+class DoMTwoSenderBelief(DoMTwoBelief):
+    """
+    Belief class for DoMTwoSender (S2).
+    Structurally identical to DoMTwoBelief; opponent is DoMOneReceiver instead of DoMOneSender.
+    Only update_distribution is overridden to safely handle the opponent's update_bounds call.
+    """
+
+    def __init__(self, zero_order_belief_distribution_support, opponent_model,
+                 history: History, include_persona_inference: bool):
+        super().__init__(zero_order_belief_distribution_support, opponent_model,
+                         history, include_persona_inference)
+
+    def update_distribution(self, action, observation, iteration_number, nested=False):
+        if iteration_number < 1:
+            return None
+        self.nested_mental_state = False
+        prior = np.copy(self.belief_distribution["zero_order_belief"][-1, :])
+        likelihood = self.compute_likelihood(action, observation, prior,
+                                             iteration_number, nested=True)
+        if self.include_persona_inference:
+            posterior = likelihood * prior
+            self.belief_distribution['zero_order_belief'] = np.vstack(
+                [self.belief_distribution['zero_order_belief'],
+                 posterior / posterior.sum()])
+        self.nested_belief = self.opponent_model.belief.belief_distribution
+        self.belief_distribution["nested_beliefs"] = self.nested_belief
+        # Safe check: DoMZeroSender may not implement update_bounds
+        if hasattr(self.opponent_model.opponent_model, 'update_bounds'):
+            self.opponent_model.opponent_model.update_bounds(action, observation, iteration_number)
+
+
+class DoMTwoSenderEnvironmentModel(DoMOneSenderEnvironmentModel):
+    """
+    Environment model for DoMTwoSender (S2), wrapping DoMOneReceiver (R1).
+    Inherits MCTS step logic from DoMOneSenderEnvironmentModel but overrides
+    initialisation and helper methods to work with the deeper opponent.
+    """
+
+    def __init__(self, opponent_model, reward_function,
+                 actions: np.array, belief_distribution: DoMTwoSenderBelief):
+        # Skip DoMOneSenderEnvironmentModel.__init__ which tries to read
+        # upper/lower bounds from a SubIntentionalAgent two levels down.
+        # DoMOneEnvironmentModel.__init__ is safe here.
+        DoMOneEnvironmentModel.__init__(self, opponent_model, reward_function,
+                                        actions, belief_distribution)
+
+    def update_parameters(self):
+        pass  # DoMOneReceiver does not expose upper/lower bounds
+
+    @staticmethod
+    def _represent_nested_beliefs_as_table(interactive_state):
+        # DoMTwoSenderBelief stores dict beliefs (same shape as DoMTwoBelief)
+        beliefs = [np.round(x, 3) for x in interactive_state.get_nested_belief.values()]
+        return str(beliefs[0]) + str(beliefs[1])
+
+    def reset_persona(self, persona, action_length, observation_length,
+                      nested_beliefs, iteration_number):
+        # nested_beliefs is a dict here (from DoMTwoSenderBelief)
+        nested_beliefs_values = [x[:iteration_number, :] for x in nested_beliefs.values()]
+        current_nested_beliefs = dict(zip(nested_beliefs.keys(), nested_beliefs_values))
+        self.opponent_model.threshold = persona.persona[0]
+        self.opponent_model.reset(self.high, self.low, observation_length, action_length, False)
+        self.opponent_model.belief.belief_distribution = current_nested_beliefs
+
+    def recall_opponents_actions_from_memory(self, key, iteration_number, action,
+                                             observation, action_node, seed):
+        if iteration_number > 0:
+            self.opponent_model.history.update_observations(action)
+            self.opponent_model.opponent_model.history.update_actions(action)
+        self.opponent_model.belief.update_distribution(observation, action, iteration_number)
+        q_values, opponent_policy = action_node.opponent_response[key]
+        # Safe aleph check — IPOMCP may or may not expose aleph_ipomdp_model
+        if (hasattr(self.opponent_model, 'solver') and
+                hasattr(self.opponent_model.solver, 'aleph_ipomdp_model') and
+                self.opponent_model.solver.aleph_ipomdp_model):
+            self.opponent_model.solver.execute_aleph_ipomdp(
+                q_values, iteration_number, None, None)
+        prng = np.random.default_rng(seed + iteration_number)
+        best_idx = prng.choice(a=len(q_values), p=opponent_policy)
+        counter_offer = Action(self.opponent_model.potential_actions[best_idx], False)
+        observation_probability = opponent_policy[best_idx]
+        self.opponent_model.environment_model.update_persona(action, counter_offer, iteration_number)
+        self.opponent_model.history.update_actions(counter_offer)
+        self.opponent_model.environment_model.opponent_model.history.update_observations(counter_offer)
+        self.opponent_model.environment_model.update_parameters()
+        return counter_offer, observation_probability, q_values, opponent_policy
+
+    def reset(self, iteration_number):
+        self.low = 0.0
+        self.high = 1.0
+
+
+class DoMTwoSenderExplorationPolicy(DoMOneSenderExplorationPolicy):
+    """
+    Rollout/exploration policy for DoMTwoSender (S2).
+    Same logic as DoMOneSenderExplorationPolicy but handles dict-format nested beliefs
+    (because DoMTwoSenderBelief stores beliefs as dicts, not flat arrays).
+    """
+
+    def __init__(self, actions, reward_function, exploration_bonus,
+                 belief, type_support, nested_type_support):
+        super().__init__(actions, reward_function, exploration_bonus,
+                         belief, type_support, nested_type_support)
+
+    def sample(self, interactive_state: InteractiveState, last_action: float,
+               observation: bool, iteration_number: int):
+        nested_belief = interactive_state.get_nested_belief()
+
+        # Extract a flat probability vector from the dict nested belief
+        if isinstance(nested_belief, dict):
+            current_beliefs = nested_belief.get("zero_order_belief",
+                                                  list(nested_belief.values())[0])
+            if hasattr(current_beliefs, 'shape') and current_beliefs.ndim > 1:
+                current_beliefs = current_beliefs[-1]
+        else:
+            current_beliefs = nested_belief
+
+        # P(Receiver with nested_belief accepts offer a) using Sender threshold support
+        acceptance_odds = np.array(
+            [x >= 1 - self.actions for x in self.nested_type_support[1:]]).T
+        acceptance_odds = np.c_[np.repeat(True, len(self.actions)), acceptance_odds]
+        acceptance_probability = np.multiply(current_beliefs, acceptance_odds).sum(axis=1)
+        opponents_reward = self.actions - interactive_state.persona.persona[0]
+        weights = (opponents_reward > 0.0) * 0.5
+        expected_reward = self.reward_function(self.actions, True) * acceptance_probability + weights
+        optimal_action_idx = np.argmax(expected_reward)
+        return Action(self.actions[optimal_action_idx], False), expected_reward[optimal_action_idx]
+
+    def compute_final_round_q_values(self, observation: Action) -> np.array:
+        return self.init_q_values(observation)
+
+
+class DoMTwoSender(DoMOneSender):
+    """
+    DoM(2) Sender (S2): uses IPOMCP to plan against a DoMOneReceiver (R1) opponent.
+    Structurally mirrors DoMTwoReceiver.
+    """
+
+    def __init__(self, actions, softmax_temp: float, threshold: Optional[float],
+                 memoization_table: DoMTwoMemoization,
+                 prior_belief: np.array,
+                 opponent_model,  # DoMOneReceiver
+                 seed: int, nested_model: bool = False):
+        # Call DoMZeroSender.__init__ directly to safely set base attributes
+        # without triggering DoMOneSender's intermediate setup (which expects
+        # a SubIntentionalAgent two levels down for upper/lower bounds).
+        DoMZeroSender.__init__(self, actions, softmax_temp, threshold,
+                               prior_belief, opponent_model, seed)
+        self._planning_parameters = dict(seed=seed, threshold=self._threshold)
+        self.memoization_table = memoization_table
+
+        # Build DoM(2) Sender components
+        self.belief = DoMTwoSenderBelief(prior_belief, self.opponent_model, self.history, True)
+        self.environment_model = DoMTwoSenderEnvironmentModel(
+            self.opponent_model, self.utility_function, actions, self.belief)
+        self.exploration_policy = DoMTwoSenderExplorationPolicy(
+            self.potential_actions,
+            self.utility_function,
+            self.config.get_from_env("rollout_rejecting_bonus"),
+            self.belief.belief_distribution,
+            self.belief.support,
+            self.opponent_model.belief.support)  # Receiver's belief support over Sender thresholds
+        self.solver = IPOMCP(self.belief, self.environment_model, self.memoization_table,
+                             self.exploration_policy, self.utility_function,
+                             self._planning_parameters, seed, 2, nested_model)
+        self.name = "DoM(2)_sender"
+
+    @staticmethod
+    def get_aleph_mechanism_status():
+        return False
+
+    def update_nested_models(self, action=None, observation=None, iteration_number=None):
+        self.opponent_model.history.rewards.append(action.value * observation.value)
+
+    @property
+    def threshold(self):
+        return self._threshold
+
+    @threshold.setter
+    def threshold(self, gamma):
+        self._threshold = gamma
+        self._high = 1 - gamma if gamma is not None else 1.0
+        self.solver.planning_parameters["threshold"] = self._threshold
+
+    def reset(self, high=None, low=None, action_length=0,
+              observation_length=0, terminal=False):
+        self.high = 1.0
+        self.low = 0.0
+        self.history.reset(action_length, observation_length)
+        self.opponent_model.reset(1.0, 0.0, observation_length, action_length,
+                                  terminal=terminal)
+        self.environment_model.reset(action_length)
+        self.belief.reset(action_length + 1 * terminal)
+        self.solver.reset(action_length)

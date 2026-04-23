@@ -92,17 +92,38 @@ class AgentFactory:
             output_agent = DoMOneSender(self.agent_actions, self.config.softmax_temperature, None,
                                         memoization_table, opponent_theta_hat_distribution, opponent_model,
                                         self.config.seed, nested)
+            
         else:
-            output_agent = None
-            raise NotImplementedError('Missing implementation')
+        # NEW: DoMOneReceiver wraps a DoMZeroSender opponent
+            opponent_model = self.dom_zero_constructor("rational_sender")
+            opponent_theta_hat_distribution = self._create_prior_distribution(self.sender_theta)
+            memoization_table = DoMOneMemoization(self.path_to_memoization_data)
+            output_agent = DoMOneReceiver(self.subject_actions, self.config.softmax_temperature, None,
+                                      memoization_table, opponent_theta_hat_distribution, opponent_model,
+                                      self.config.seed, int(self.task_duration), nested)    
+            
         return output_agent
+    
+
     # Coding for DoM(2) Receiver
     def dom_two_constructor(self, agent_role):
-        opponent_model = self.dom_one_constructor("rational_sender", True)
-        opponent_theta_hat_distribution = self._create_prior_distribution(self.sender_theta)
-        memoization_table = DoMTwoMemoization(self.path_to_memoization_data)
-        output_agent = DoMTwoReceiver(self.subject_actions, self.config.softmax_temperature, None, memoization_table,
-                                      opponent_theta_hat_distribution, opponent_model, self.config.seed,
-                                      self.task_duration)
+        if agent_role == "rational_sender":
+        # NEW: DoMTwoSender wraps a DoMOneReceiver opponent
+            opponent_model = self.dom_one_constructor("rational_receiver", True)
+            opponent_theta_hat_distribution = self._create_prior_distribution(self.receiver_theta)
+            memoization_table = DoMTwoMemoization(self.path_to_memoization_data)
+            output_agent = DoMTwoSender(self.agent_actions, self.config.softmax_temperature, None,
+                                    memoization_table, opponent_theta_hat_distribution,
+                                    opponent_model, self.config.seed)
+        
+        else:
+        # Existing: DoMTwoReceiver wraps a DoMOneSender opponent
+            opponent_model = self.dom_one_constructor("rational_sender", True)
+            opponent_theta_hat_distribution = self._create_prior_distribution(self.sender_theta)
+            memoization_table = DoMTwoMemoization(self.path_to_memoization_data)
+            output_agent = DoMTwoReceiver(self.subject_actions, self.config.softmax_temperature, None,
+                                      memoization_table, opponent_theta_hat_distribution,
+                                      opponent_model, self.config.seed, self.task_duration)
+        
         return output_agent
 

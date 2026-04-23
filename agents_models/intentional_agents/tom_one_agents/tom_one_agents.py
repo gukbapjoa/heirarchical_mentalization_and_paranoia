@@ -323,7 +323,7 @@ class DoMOneSenderExplorationPolicy(DoMZeroSenderExplorationPolicy):
     def sample(self, interactive_state: InteractiveState, last_action: float, observation: bool, iteration_number: int):
         acceptance_odds = np.array([x >= 1 - self.actions for x in self.nested_type_support[1:]]).T
         acceptance_odds = np.c_[np.repeat(True, len(self.actions)), acceptance_odds]
-        current_beliefs = interactive_state.get_nested_belief
+        current_beliefs = interactive_state.get_nested_belief()
         acceptance_probability = np.multiply(current_beliefs, acceptance_odds).sum(axis=1) * 1.0
         opponents_reward = self.actions - interactive_state.persona.persona[0]
         weights = (opponents_reward > 0.0) * 0.5
@@ -391,4 +391,205 @@ class DoMOneSender(DoMZeroSender):
         self.reset_belief(action_length + 1 * terminal)
         self.reset_solver(action_length)
 
+# =============================================================================
+# DoMOneReceiver (R1): models a DoMZeroSender (S0) opponent.
+# Mirrors the structure of DoMOneSender, but from the Receiver's perspective.
+# =============================================================================
 
+class DoMOneReceiverEnvironmentModel(DoMOneEnvironmentModel):
+    """
+    Simulates what the DoMZeroSender (S0) will offer next,
+    so the DoMOneReceiver can plan its accept/reject decisions.
+    """
+
+    def __init__(self, opponent_model: DoMZeroSender, reward_function,
+                 actions: np.array, belief_distribution: DoMOneBelief):
+        super().__init__(opponent_model, reward_function, actions, belief_distribution)
+
+    @staticmethod
+    def compute_iteration(iteration_number):
+        return iteration_number
+
+    def get_persona(self):
+        return Persona([self.opponent_model.threshold, False], False)
+
+    def compute_expected_reward(self, action, observation, counter_offer, observation_probability):
+        # Receiver reward: based on accept/reject (action) and current offer (observation)
+        return self.reward_function(action.value, observation.value, counter_offer.value)
+
+    @staticmethod
+    def _represent_nested_beliefs_as_table(interactive_state):
+        # DoMOneBelief stores beliefs as a flat array (not a dict like DoMTwoBelief)
+        return np.round(interactive_state.get_nested_belief, 3)
+
+    def update_interactive_state(self, interactive_state, mental_model,
+                                 updated_nested_beliefs, q_values,
+                                 updated_nested_likelihood=None):
+        new_state_name = int(interactive_state.state.name) + 1
+        new_state = State(str(new_state_name), new_state_name == 10)
+        new_persona = Persona([interactive_state.persona.persona[0], mental_model], q_values)
+        return InteractiveState(new_state, new_persona, updated_nested_beliefs)
+
+    def step(self, history_node: HistoryNode, action_node: ActionNode,
+             interactive_state: InteractiveState, seed: int, iteration_number: int, *args):
+        action = action_node.action            # Receiver's decision: accept or reject
+        observation = history_node.observation # Sender's previous offer
+
+        nested_beliefs = self._represent_nested_beliefs_as_table(interactive_state)
+        key = f'{nested_beliefs}-{str(interactive_state)}-{observation.value}-{action.value}-{iteration_number}'
+
+        if key in action_node.opponent_response.keys():
+            # Re-use cached result from a prior visit to this node
+            q_values, opponent_policy = action_node.opponent_response[key]
+            if iteration_number > 0:
+                self.opponent_model.history.update_observations(action)
+            self.opponent_model.belief.update_distribution(observation, action, iteration_number)
+            prng = np.random.default_rng(seed + iteration_number)
+            best_idx = prng.choice(a=len(q_values), p=opponent_policy)
+            counter_offer = Action(self.opponent_model.potential_actions[best_idx], False)
+            observation_probability = opponent_policy[best_idx]
+        else:
+            # Simulate fresh: ask the DoMZeroSender what it would offer next
+            counter_offer, observation_probability, q_values, opponent_policy = \
+                self.opponent_model.act(seed, observation, action, iteration_number)
+            action_node.add_opponent_response(key, q_values, opponent_policy)
+
+        updated_nested_beliefs = self.opponent_model.belief.get_current_belief()
+        self.opponent_model.history.update_rewards(counter_offer.value * action.value)
+        expected_reward = self.compute_expected_reward(action, observation, counter_offer,
+                                                       observation_probability)
+        new_is = self.update_interactive_state(interactive_state, False,
+                                               updated_nested_beliefs, q_values)
+        return new_is, counter_offer, expected_reward, observation_probability
+
+    def rollout_step(self, interactive_state: InteractiveState, action: Action,
+                     observation: Action, seed: int, iteration_number: int, *args):
+        counter_offer, observation_probability, q_values, opponent_policy = \
+            self.opponent_model.act(seed + iteration_number, observation, action, iteration_number)
+        reward = self.compute_expected_reward(action, observation, counter_offer, observation_probability)
+        updated_nested_beliefs = self.opponent_model.belief.get_current_belief()
+        new_is = self.update_interactive_state(interactive_state, False,
+                                               updated_nested_beliefs, q_values)
+        return new_is, counter_offer, reward, observation_probability
+
+    def step_from_is(self, new_interactive_state: InteractiveState, previous_observation: Action,
+                     action: Action, seed: int, iteration_number: int):
+        if int(new_interactive_state.get_state.name) > 0:
+            self.opponent_model.history.update_observations(action)
+        obs_probs = self.opponent_model.softmax_transformation(
+            new_interactive_state.persona.q_values[:, 1])
+        rng = np.random.default_rng(seed)
+        idx = rng.choice(new_interactive_state.persona.q_values.shape[0], p=obs_probs)
+        new_observation = Action(new_interactive_state.persona.q_values[idx, 0], False)
+        observation_probability = obs_probs[idx]
+        expected_reward = self.compute_expected_reward(action, previous_observation,
+                                                       new_observation, observation_probability)
+        self.opponent_model.history.update_actions(new_observation)
+        self.opponent_model.belief.belief_distribution = np.vstack(
+            [self.opponent_model.belief.belief_distribution,
+             new_interactive_state.get_nested_belief])
+        return new_observation, expected_reward, observation_probability
+
+    def reset_persona(self, persona, action_length, observation_length,
+                      nested_beliefs, iteration_number):
+        nested_beliefs = nested_beliefs[:iteration_number + 1, :]
+        self.opponent_model.threshold = persona.persona[0]
+        if action_length == 0 and observation_length == 0:
+            return None
+        self.opponent_model.reset(self.high, self.low, observation_length, action_length, False)
+        self.opponent_model.belief.belief_distribution = nested_beliefs
+
+    def update_parameters(self):
+        pass  # DoMZeroSender does not track upper/lower bounds the same way
+
+    def reset(self, iteration_number):
+        self.low = 0.0
+        self.high = 1.0
+
+
+class DoMOneReceiverExplorationPolicy(DoMZeroExplorationPolicy):
+    """
+    Rollout policy for DoMOneReceiver.
+    Accept if expected reward > exploration bonus; reject otherwise.
+    Note: Inherits from DoMZeroExplorationPolicy (not DoMTwoReceiverExplorationPolicy)
+    to avoid a circular import between tom_one_agents and tom_two_agents.
+    """
+
+    def __init__(self, actions: np.array, reward_function, exploration_bonus: float,
+                 belief: np.array, type_support: np.array):
+        super().__init__(actions, reward_function, exploration_bonus, belief, type_support)
+
+    def init_q_values(self, observation: Action, *args):
+        if observation.value is None:
+            return np.array([0.5, 0.5])
+        return np.array([self.reward_function(True, observation.value), self.exploration_bonus])
+
+    def compute_final_round_q_values(self, observation: float) -> np.array:
+        return np.array([self.reward_function(True, observation), 0.0])
+
+    def sample(self, interactive_state: InteractiveState, last_action: bool,
+               observation: float, iteration_number: int):
+        q_values = np.array([self.reward_function(True, observation), self.exploration_bonus])
+        optimal_action_idx = np.argmax(q_values)
+        return Action(self.actions[optimal_action_idx], False), q_values[optimal_action_idx]
+
+
+class DoMOneReceiver(DoMZeroReceiver):
+    """
+    DoM(1) Receiver (R1): uses IPOMCP to plan against a DoMZeroSender (S0) opponent.
+    Structurally mirrors DoMOneSender.
+    """
+
+    def __init__(self, actions, softmax_temp: float, threshold: Optional[float],
+                 memoization_table: DoMOneMemoization,
+                 prior_belief: np.array,
+                 opponent_model: DoMZeroSender,
+                 seed: int, task_duration: int, nested_model: bool = False):
+        # Initialise base DoMZeroReceiver (sets up detection_mechanism, history, etc.)
+        super().__init__(actions, softmax_temp, threshold, prior_belief, opponent_model,
+                         seed, task_duration, True, 0.1, 0.95)
+        self._planning_parameters = dict(seed=seed, threshold=self._threshold)
+        self.memoization_table = memoization_table
+
+        # Override belief, environment model, policy, and solver with DoM(1) versions
+        self.belief = DoMOneBelief(prior_belief, self.opponent_model, self.history, True)
+        self.environment_model = DoMOneReceiverEnvironmentModel(
+            self.opponent_model, self.utility_function, actions, self.belief)
+        self.exploration_policy = DoMOneReceiverExplorationPolicy(
+            self.potential_actions,
+            self.utility_function,
+            self.config.get_from_env("rollout_rejecting_bonus"),
+            self.belief.belief_distribution,
+            self.belief.support)
+        self.solver = IPOMCP(self.belief, self.environment_model, self.memoization_table,
+                             self.exploration_policy, self.utility_function,
+                             self._planning_parameters, seed, 1, nested_model)
+        self.name = "DoM(1)_receiver"
+
+    @staticmethod
+    def get_aleph_mechanism_status():
+        # DoM(1) Receiver does not trigger the breakdown policy itself
+        return False
+
+    def update_nested_models(self, action=None, observation=None, iteration_number=None):
+        self.opponent_model.history.rewards.append(action.value * observation.value)
+
+    @property
+    def threshold(self):
+        return self._threshold
+
+    @threshold.setter
+    def threshold(self, gamma):
+        self._threshold = gamma
+        self.solver.planning_parameters["threshold"] = self._threshold
+
+    def reset(self, high=None, low=None, action_length=0,
+              observation_length=0, terminal=False):
+        self.high = 1.0
+        self.low = 0.0
+        self.history.reset(action_length, observation_length)
+        self.opponent_model.reset(1.0, 0.0, observation_length, action_length,
+                                  terminal=terminal)
+        self.environment_model.reset(action_length)
+        self.belief.reset(action_length + 1 * terminal)
+        self.solver.reset(action_length)
