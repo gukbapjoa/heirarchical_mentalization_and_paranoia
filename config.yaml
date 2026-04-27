@@ -13,7 +13,7 @@ general:
   aleph_ipomdp_awareness: True
   strong_typicality_delta: 0.5
   expected_reward_omega: 1.5
-  state: simulation
+  state: debug                            # debug for dyad, simulation for full
   use_memoization: False
 
 environments:

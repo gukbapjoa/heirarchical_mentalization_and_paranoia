@@ -405,7 +405,7 @@ class DoMTwoSenderEnvironmentModel(DoMOneSenderEnvironmentModel):
     def reset_persona(self, persona, action_length, observation_length,
                       nested_beliefs, iteration_number):
         # nested_beliefs is a dict here (from DoMTwoSenderBelief)
-        nested_beliefs_values = [x[:iteration_number, :] for x in nested_beliefs.values()]
+        nested_beliefs_values = [x[:iteration_number + 1, :] for x in nested_beliefs.values()]
         current_nested_beliefs = dict(zip(nested_beliefs.keys(), nested_beliefs_values))
         self.opponent_model.threshold = persona.persona[0]
         self.opponent_model.reset(self.high, self.low, observation_length, action_length, False)
@@ -453,7 +453,7 @@ class DoMTwoSenderExplorationPolicy(DoMOneSenderExplorationPolicy):
 
     def sample(self, interactive_state: InteractiveState, last_action: float,
                observation: bool, iteration_number: int):
-        nested_belief = interactive_state.get_nested_belief()
+        nested_belief = interactive_state.get_nested_belief
 
         # Extract a flat probability vector from the dict nested belief
         if isinstance(nested_belief, dict):
@@ -539,5 +539,5 @@ class DoMTwoSender(DoMOneSender):
         self.opponent_model.reset(1.0, 0.0, observation_length, action_length,
                                   terminal=terminal)
         self.environment_model.reset(action_length)
-        self.belief.reset(action_length + 1 * terminal)
+        self.belief.reset(max(1, action_length + int(terminal)))
         self.solver.reset(action_length)

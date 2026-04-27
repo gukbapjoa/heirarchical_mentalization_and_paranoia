@@ -323,7 +323,7 @@ class DoMOneSenderExplorationPolicy(DoMZeroSenderExplorationPolicy):
     def sample(self, interactive_state: InteractiveState, last_action: float, observation: bool, iteration_number: int):
         acceptance_odds = np.array([x >= 1 - self.actions for x in self.nested_type_support[1:]]).T
         acceptance_odds = np.c_[np.repeat(True, len(self.actions)), acceptance_odds]
-        current_beliefs = interactive_state.get_nested_belief()
+        current_beliefs = interactive_state.get_nested_belief
         acceptance_probability = np.multiply(current_beliefs, acceptance_odds).sum(axis=1) * 1.0
         opponents_reward = self.actions - interactive_state.persona.persona[0]
         weights = (opponents_reward > 0.0) * 0.5
@@ -591,5 +591,5 @@ class DoMOneReceiver(DoMZeroReceiver):
         self.opponent_model.reset(1.0, 0.0, observation_length, action_length,
                                   terminal=terminal)
         self.environment_model.reset(action_length)
-        self.belief.reset(action_length + 1 * terminal)
+        self.belief.reset(max(1, action_length + 1 * int(terminal)))
         self.solver.reset(action_length)

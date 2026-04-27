@@ -17,3 +17,5 @@ class SubIntentionalReceiver(SubIntentionalAgent):
         probabilities = self.softmax_transformation(q_values)
         return self.potential_actions, q_values, probabilities
 
+    def update_nested_models(self, action=None, observation=None, iteration_number=None):
+        pass # DoM(-1) agents do not have nested models to update
