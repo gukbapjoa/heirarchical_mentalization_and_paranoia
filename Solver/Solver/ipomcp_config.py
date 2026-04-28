@@ -151,13 +151,10 @@ class Config(object):
 _config = None
 
 
-def init_config(environment, args, path: str = 'config.yaml') -> Config:
+def init_config(environment, args, path: str = 'config.yaml'):
     global _config
-    if not _config:
-        _config = Config(environment, args, path)
-
+    _config = Config(environment, args, path)
     return _config
-
 
 def get_config() -> Union[Config, None]:
     if _config is None:
