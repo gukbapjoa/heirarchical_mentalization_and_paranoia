@@ -368,7 +368,9 @@ class DoMOneSender(DoMZeroSender):
         return False
 
     def update_nested_models(self, action=None, observation=None, iteration_number=None):
-        self.opponent_model.history.rewards.append(action.value * observation.value)
+        if action is not None and observation is not None:
+          if action.value is not None and observation.value is not None:
+            self.opponent_model.history.rewards.append(action.value * observation.value)
 
     @property
     def threshold(self):
@@ -572,7 +574,9 @@ class DoMOneReceiver(DoMZeroReceiver):
         return False
 
     def update_nested_models(self, action=None, observation=None, iteration_number=None):
-        self.opponent_model.history.rewards.append(action.value * observation.value)
+        if action is not None and observation is not None:
+         if action.value is not None and observation.value is not None:
+                self.opponent_model.history.rewards.append(action.value * observation.value)
 
     @property
     def threshold(self):

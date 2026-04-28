@@ -7,7 +7,7 @@ class DoMZeroSenderBelief(DoMZeroBelief):
     def __init__(self, support, zero_level_belief, opponent_model: SubIntentionalAgent, history: History):
         super().__init__(support, zero_level_belief, opponent_model, history)
 
-    def compute_likelihood(self, action, observation, prior, iteration_number=None):
+    def compute_likelihood(self, action, observation, prior, iteration_number=None, nested=False):
         """
         Compute observation likelihood given opponent's type and last action
         :param iteration_number:
