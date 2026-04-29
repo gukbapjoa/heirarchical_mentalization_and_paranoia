@@ -13,7 +13,8 @@ class SubIntentionalReceiver(SubIntentionalAgent):
         return (observation - self.threshold) * action
 
     def forward(self, action: Action, observation: Action, iteration_number=None):
-        q_values = self.utility_function(self.potential_actions, observation.value)
+        obs_value = observation.value if observation is not None and observation.value is not None else 0.5
+        q_values = self.utility_function(self.potential_actions, obs_value)
         probabilities = self.softmax_transformation(q_values)
         return self.potential_actions, q_values, probabilities
 

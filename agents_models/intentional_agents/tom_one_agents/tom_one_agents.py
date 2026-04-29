@@ -42,8 +42,10 @@ class DoMOneBelief(DoMZeroBelief):
         """
         if iteration_number < 1:
             return None
-        prior = np.copy(self.belief_distribution["zero_order_belief"][-1, :])
-        # Compute P_0(a_t|theta, h^{t-1})
+        if isinstance(self.belief_distribution, dict):
+            prior = np.copy(self.belief_distribution["zero_order_belief"][-1, :])
+        else:
+            prior = np.copy(self.belief_distribution[-1, :])        # Compute P_0(a_t|theta, h^{t-1})
         likelihood = self.compute_likelihood(action, observation, prior, iteration_number, nested)
         if self.include_persona_inference:
             # Compute P(observation|action, history)
@@ -107,6 +109,11 @@ class DoMOneBelief(DoMZeroBelief):
         values = [x[-1] for x in self.belief_distribution.values()]
         keys = [x for x in self.belief_distribution.keys()]
         return dict(zip(keys, values))
+    
+    def get_current_likelihood(self):
+        # DoMOneBelief does not track likelihoods separately.
+        # Only DoMZeroReceiverBelief does. Return None safely.
+        return None
 
     def update_distribution_from_particles(self, particles: dict, action, observation, iteration_number):
         # Sample persona from particles
@@ -128,13 +135,18 @@ class DoMOneBelief(DoMZeroBelief):
             [self.belief_distribution['zero_order_belief'], posterior_distribution])
         # Note! since the nested belief is single - we average those
         average_nested_beliefs = np.mean(nested_beliefs, axis=0)
-        average_nested_likelihood = np.mean(nested_likelihood, axis=0)
+        # DoMOneBelief (Sender-side) does not track likelihood - skip averaging
+        if any(l is None for l in nested_likelihood):
+            average_nested_likelihood = None
+        else:
+            average_nested_likelihood = np.mean(nested_likelihood, axis=0)
         self.nested_belief = np.vstack([self.nested_belief, average_nested_beliefs])
         # Update nested model beliefs
         self.opponent_model.belief.belief_distribution = np.vstack(
             [self.opponent_model.belief.belief_distribution, average_nested_beliefs])
-        self.opponent_model.belief.likelihood = average_nested_likelihood
-        if self.opponent_model.detection_mechanism.activated:
+        if average_nested_likelihood is not None:
+            self.opponent_model.belief.likelihood = average_nested_likelihood
+        if hasattr(self.opponent_model, 'detection_mechanism') and self.opponent_model.detection_mechanism.activated:
             mental_model = [x[0].get_persona[1] for x in interactive_states_per_persona][0]
             self.opponent_model.detection_mechanism.is_aleph_mechanism_on.append(mental_model)
         self.belief_distribution["nested_beliefs"] = np.copy(self.opponent_model.belief.belief_distribution)
@@ -500,6 +512,16 @@ class DoMOneReceiverEnvironmentModel(DoMOneEnvironmentModel):
             return None
         self.opponent_model.reset(self.high, self.low, observation_length, action_length, False)
         self.opponent_model.belief.belief_distribution = nested_beliefs
+
+    def compute_future_values(self, observation, action, iteration_number, duration):
+        # At the planning horizon, estimate future reward as expected value
+        # of accepting remaining offers, discounted by remaining trials.
+        # observation = offer value, action = accept/reject
+        if observation is None or action is None:
+            return 0.0
+        current_reward = self.reward_function(action, observation)
+        remaining_trials = max(duration - iteration_number, 1)
+        return current_reward * remaining_trials
 
     def update_parameters(self):
         pass  # DoMZeroSender does not track upper/lower bounds the same way

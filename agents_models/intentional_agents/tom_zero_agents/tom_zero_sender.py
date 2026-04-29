@@ -1,3 +1,5 @@
+from sympy import sequence
+
 from agents_models.subintentional_agents.subintentional_receiver import *
 import functools
 
@@ -16,6 +18,8 @@ class DoMZeroSenderBelief(DoMZeroBelief):
         :param prior:
         :return:
         """
+        if observation is None or observation.value is None:
+            return np.ones_like(prior) / len(prior)  # flat/uniform prior at trial 0
         last_observation = self.history.get_last_observation()
         offer_likelihood = np.empty_like(prior)
         original_threshold = self.opponent_model.threshold
@@ -107,7 +111,7 @@ class DoMZeroSenderSolver(DoMZeroEnvironmentModel):
         for threshold in self.belief.belief_distribution[:, 0]:
             # Reset nested model
             self.reset_persona(threshold, action_length, observation_length,
-                               self.opponent_model.belief)
+                               self.opponent_model.belief, iteration_number)
             future_values = functools.partial(self.compute_expected_value_from_offer, observation=observation,
                                               opponent_model=self.opponent_model,
                                               iteration_number=iteration_number)
@@ -165,3 +169,10 @@ class DoMZeroSender(DoMZeroModel):
 
     def post_action_selection_update_nested_models(self, action=None, iteration_number=None):
         pass
+
+    @staticmethod
+    def get_aleph_mechanism_status(sequence=False):
+        # Senders have no paranoia detection - Aleph is Receiver-side only
+        if sequence:
+            return [False]
+        return False
