@@ -1,3 +1,5 @@
+from typing import Tuple, Optional
+
 from Solver.Solver.ipomcp_solver import *
 import os
 
@@ -71,7 +73,7 @@ class SubIntentionalAgent(ABC):
         pass
 
     def act(self, seed, action: Optional[Action] = None, observation: Optional[Action] = None,
-            iteration_number: Optional[int] = None) -> [float, np.array]:
+            iteration_number: Optional[int] = None) -> Tuple[Action, float, np.ndarray, np.ndarray]:
         seed = self.update_seed(seed, iteration_number)
         relevant_actions, q_values, probabilities = self.forward(action, observation, iteration_number)
         random_number_generator = np.random.default_rng(seed)
@@ -274,7 +276,7 @@ class DoMZeroModel(SubIntentionalAgent):
         self.reset_belief(int(action_length + 1))
         self.reset_solver(action_length)
 
-    def act(self, seed, action=None, observation=None, iteration_number=None) -> [float, np.array]:
+    def act(self, seed, action=None, observation=None, iteration_number=None) -> Tuple[Action, float, np.ndarray, np.ndarray]:
         if iteration_number > 0:
             self.history.update_observations(observation)
             self.opponent_model.history.update_actions(observation)
