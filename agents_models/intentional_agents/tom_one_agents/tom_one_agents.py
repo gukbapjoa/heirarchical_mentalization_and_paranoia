@@ -42,19 +42,30 @@ class DoMOneBelief(DoMZeroBelief):
         """
         if iteration_number < 1:
             return None
+        # Check if it is a dict or if it was squashed into an array by the S2 simulation
         if isinstance(self.belief_distribution, dict):
             prior = np.copy(self.belief_distribution["zero_order_belief"][-1, :])
         else:
-            prior = np.copy(self.belief_distribution[-1, :])        # Compute P_0(a_t|theta, h^{t-1})
+            prior = np.copy(self.belief_distribution[-1, :])
+            
+        prior = np.squeeze(prior)
+
         likelihood = self.compute_likelihood(action, observation, prior, iteration_number, nested)
-        if self.include_persona_inference:
-            # Compute P(observation|action, history)
+        
+        if self.include_persona_inference and likelihood is not None:
             posterior = likelihood * prior
-            self.belief_distribution['zero_order_belief'] = np.vstack(
-                [self.belief_distribution['zero_order_belief'], posterior / posterior.sum()])
-        # Store nested belief
-        self.nested_belief = self.opponent_model.belief.belief_distribution
-        self.belief_distribution["nested_beliefs"] = self.nested_belief
+            if isinstance(self.belief_distribution, dict):
+                self.belief_distribution['zero_order_belief'] = np.vstack(
+                    [self.belief_distribution['zero_order_belief'], posterior / posterior.sum()])
+            else:
+                self.belief_distribution = np.vstack([self.belief_distribution, posterior / posterior.sum()])
+        
+        # Update and store nested beliefs safely
+        self.nested_belief = np.atleast_2d(self.opponent_model.belief.get_current_belief())
+        if isinstance(self.belief_distribution, dict):
+            self.belief_distribution["nested_beliefs"] = np.vstack(
+                [self.belief_distribution["nested_beliefs"], self.nested_belief])
+            
         self.opponent_model.opponent_model.update_bounds(action, observation, iteration_number)
         self.nested_mental_state = self.opponent_model.get_aleph_mechanism_status()
 
@@ -70,7 +81,7 @@ class DoMOneBelief(DoMZeroBelief):
         :return:
         """
         last_observation = self.history.get_last_observation(nested)
-        offer_likelihood = np.empty_like(prior)
+        offer_likelihood = np.zeros(len(self.support))
         original_threshold = self.opponent_model.threshold
         # update nested belief
         self.opponent_model.belief.update_distribution(last_observation, action, iteration_number, nested)
@@ -97,10 +108,15 @@ class DoMOneBelief(DoMZeroBelief):
         :param n_samples:
         :return:
         """
-        probabilities = self.belief_distribution['zero_order_belief'][-1, :]
+        if isinstance(self.belief_distribution, dict):
+            probabilities = self.belief_distribution['zero_order_belief'][-1, :]
+            size_limit = self.belief_distribution['zero_order_belief'].shape[1]
+        else:
+            probabilities = self.belief_distribution[-1, :]
+            size_limit = self.belief_distribution.shape[1]
+            
         rng_generator = np.random.default_rng(rng_key)
-        idx = rng_generator.choice(self.belief_distribution['zero_order_belief'].shape[1], size=n_samples,
-                                   p=probabilities)
+        idx = rng_generator.choice(size_limit, size=n_samples, p=probabilities)
         particles = self.support[idx]
         mental_state = [False] * n_samples
         return list(zip(particles, mental_state))
@@ -449,14 +465,20 @@ class DoMOneReceiverEnvironmentModel(DoMOneEnvironmentModel):
         action = action_node.action            # Receiver's decision: accept or reject
         observation = history_node.observation # Sender's previous offer
 
-        nested_beliefs = self._represent_nested_beliefs_as_table(interactive_state)
-        key = f'{nested_beliefs}-{str(interactive_state)}-{observation.value}-{action.value}-{iteration_number}'
+        # Aggressively round to 1 decimal to force cache hits and stop the freezing
+        nested_beliefs = np.round(interactive_state.get_nested_belief, 1)
+        simplified_state = str(interactive_state.state.name)
+
+        key = f'{nested_beliefs.tobytes()}-{simplified_state}-{observation.value}-{action.value}-{iteration_number}'
 
         if key in action_node.opponent_response.keys():
             # Re-use cached result from a prior visit to this node
             q_values, opponent_policy = action_node.opponent_response[key]
             if iteration_number > 0:
+                # Essential fix: update S0's history AND R-1's nested history
                 self.opponent_model.history.update_observations(action)
+                self.opponent_model.opponent_model.history.update_actions(action)
+
             self.opponent_model.belief.update_distribution(observation, action, iteration_number)
             prng = np.random.default_rng(seed + iteration_number)
             best_idx = prng.choice(a=len(q_values), p=opponent_policy)
@@ -469,11 +491,15 @@ class DoMOneReceiverEnvironmentModel(DoMOneEnvironmentModel):
             action_node.add_opponent_response(key, q_values, opponent_policy)
 
         updated_nested_beliefs = self.opponent_model.belief.get_current_belief()
+        updated_nested_likelihood = getattr(self.opponent_model.belief, 'likelihood', None)
+        
         self.opponent_model.history.update_rewards(counter_offer.value * action.value)
         expected_reward = self.compute_expected_reward(action, observation, counter_offer,
                                                        observation_probability)
+        
         new_is = self.update_interactive_state(interactive_state, False,
-                                               updated_nested_beliefs, q_values)
+                                               updated_nested_beliefs, q_values,
+                                               updated_nested_likelihood)
         return new_is, counter_offer, expected_reward, observation_probability
 
     def rollout_step(self, interactive_state: InteractiveState, action: Action,
@@ -488,20 +514,29 @@ class DoMOneReceiverEnvironmentModel(DoMOneEnvironmentModel):
 
     def step_from_is(self, new_interactive_state: InteractiveState, previous_observation: Action,
                      action: Action, seed: int, iteration_number: int):
+        
+        # Align history updates with the S0 and R-1 layers
         if int(new_interactive_state.get_state.name) > 0:
             self.opponent_model.history.update_observations(action)
+            self.opponent_model.opponent_model.history.update_actions(action)
+
         obs_probs = self.opponent_model.softmax_transformation(
             new_interactive_state.persona.q_values[:, 1])
         rng = np.random.default_rng(seed)
         idx = rng.choice(new_interactive_state.persona.q_values.shape[0], p=obs_probs)
         new_observation = Action(new_interactive_state.persona.q_values[idx, 0], False)
         observation_probability = obs_probs[idx]
+
         expected_reward = self.compute_expected_reward(action, previous_observation,
                                                        new_observation, observation_probability)
+        
         self.opponent_model.history.update_actions(new_observation)
+        self.opponent_model.environment_model.opponent_model.history.update_observations(new_observation)
+
         self.opponent_model.belief.belief_distribution = np.vstack(
             [self.opponent_model.belief.belief_distribution,
              new_interactive_state.get_nested_belief])
+        
         return new_observation, expected_reward, observation_probability
 
     def reset_persona(self, persona, action_length, observation_length,
