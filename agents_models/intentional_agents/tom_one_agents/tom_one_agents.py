@@ -42,12 +42,13 @@ class DoMOneBelief(DoMZeroBelief):
         """
         if iteration_number < 1:
             return None
+        
         # Check if it is a dict or if it was squashed into an array by the S2 simulation
-        if isinstance(self.belief_distribution, dict):
-            prior = np.copy(self.belief_distribution["zero_order_belief"][-1, :])
-        else:
-            prior = np.copy(self.belief_distribution[-1, :])
-            
+        zob = self.belief_distribution
+        while isinstance(zob, dict):
+            zob = zob.get("zero_order_belief", list(zob.values())[0])
+
+        prior = np.copy(np.atleast_2d(zob)[-1, :])
         prior = np.squeeze(prior)
 
         likelihood = self.compute_likelihood(action, observation, prior, iteration_number, nested)
@@ -132,39 +133,58 @@ class DoMOneBelief(DoMZeroBelief):
         return None
 
     def update_distribution_from_particles(self, particles: dict, action, observation, iteration_number):
-        # Sample persona from particles
         persona = [x for x in particles.keys()]
         thresholds = [float(x.split("-")[0]) for x in persona]
+        
         # Validate that we have representation of all the types
-        all_types_represented = np.sort(self.support) == np.sort(thresholds)
+        all_types_represented = np.isin(np.sort(self.support), np.sort(thresholds))
+
         interactive_states_per_persona = [x[0] for x in particles.values()]
         likelihood = [x[1] for x in interactive_states_per_persona]
-        full_likelihood = likelihood * all_types_represented + 0.001 * (1-all_types_represented)
+        
+        full_likelihood = np.empty_like(self.support, dtype=float)
+        full_likelihood[all_types_represented] = likelihood
+        full_likelihood[~all_types_represented] = 0.001
+
         prior_distribution = np.copy(self.belief_distribution["zero_order_belief"][-1, :])
         _, sorted_likelihood = zip(*sorted(zip(self.support, full_likelihood)))
+        
         posterior_distribution = prior_distribution * sorted_likelihood / np.sum(prior_distribution * sorted_likelihood)
+        
         # Sample nested beliefs and running likelihood
         nested_beliefs = [x[0].get_nested_belief for x in interactive_states_per_persona]
         nested_likelihood = [x[0].get_nested_likelihood for x in interactive_states_per_persona]
+        
         # Update beliefs
         self.belief_distribution['zero_order_belief'] = np.vstack(
             [self.belief_distribution['zero_order_belief'], posterior_distribution])
+            
         # Note! since the nested belief is single - we average those
         average_nested_beliefs = np.mean(nested_beliefs, axis=0)
+        
         # DoMOneBelief (Sender-side) does not track likelihood - skip averaging
         if any(l is None for l in nested_likelihood):
             average_nested_likelihood = None
         else:
-            average_nested_likelihood = np.mean(nested_likelihood, axis=0)
+            try:
+                average_nested_likelihood = np.mean(nested_likelihood, axis=0)
+            except ValueError:
+                min_len = min(len(l) for l in nested_likelihood)
+                average_nested_likelihood = np.mean([l[:min_len] for l in nested_likelihood], axis=0)
+        
         self.nested_belief = np.vstack([self.nested_belief, average_nested_beliefs])
+        
         # Update nested model beliefs
         self.opponent_model.belief.belief_distribution = np.vstack(
             [self.opponent_model.belief.belief_distribution, average_nested_beliefs])
+            
         if average_nested_likelihood is not None:
             self.opponent_model.belief.likelihood = average_nested_likelihood
+            
         if hasattr(self.opponent_model, 'detection_mechanism') and self.opponent_model.detection_mechanism.activated:
             mental_model = [x[0].get_persona[1] for x in interactive_states_per_persona][0]
             self.opponent_model.detection_mechanism.is_aleph_mechanism_on.append(mental_model)
+            
         self.belief_distribution["nested_beliefs"] = np.copy(self.opponent_model.belief.belief_distribution)
         self.opponent_model.opponent_model.update_bounds(action, observation, iteration_number)
 

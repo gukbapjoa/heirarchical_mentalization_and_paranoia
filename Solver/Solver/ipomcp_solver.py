@@ -240,7 +240,7 @@ class IPOMCP:
 
     def rollout(self, trail_number, interactive_state: InteractiveState, last_action: Action, observation: Action,
                 depth, seed: int,
-                iteration_number) -> [float, bool, int]:
+                iteration_number) -> tuple[float, bool, int]:
         if depth >= self.depth or iteration_number >= self.config.task_duration:
             future_value = self.environment_simulator.compute_future_values(observation.value, last_action.value,
                                                                             iteration_number, self.config.task_duration)

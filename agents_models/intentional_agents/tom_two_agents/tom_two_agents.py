@@ -403,10 +403,17 @@ class DoMTwoSenderEnvironmentModel(DoMOneSenderEnvironmentModel):
         return str(beliefs[0]) + str(beliefs[1])
 
     def reset_persona(self, persona, action_length, observation_length,
-                      nested_beliefs, iteration_number):
-        # nested_beliefs is a dict here (from DoMTwoSenderBelief)
-        nested_beliefs_values = [x[:iteration_number + 1, :] for x in nested_beliefs.values()]
-        current_nested_beliefs = dict(zip(nested_beliefs.keys(), nested_beliefs_values))
+                  nested_beliefs, iteration_number):
+        if isinstance(nested_beliefs, dict):
+            nested_beliefs_values = []
+            for x in nested_beliefs.values():
+                if isinstance(x, np.ndarray) and x.ndim >= 2:
+                    nested_beliefs_values.append(x[:iteration_number + 1, :])
+                else:
+                    nested_beliefs_values.append(x)  # 1D or dict: pass as-is
+            current_nested_beliefs = dict(zip(nested_beliefs.keys(), nested_beliefs_values))
+        else:
+            current_nested_beliefs = nested_beliefs
         self.opponent_model.threshold = persona.persona[0]
         self.opponent_model.reset(self.high, self.low, observation_length, action_length, False)
         self.opponent_model.belief.belief_distribution = current_nested_beliefs
