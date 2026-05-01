@@ -376,7 +376,25 @@ class DoMTwoSenderBelief(DoMTwoBelief):
         # Safe check: DoMZeroSender may not implement update_bounds
         if hasattr(self.opponent_model.opponent_model, 'update_bounds'):
             self.opponent_model.opponent_model.update_bounds(action, observation, iteration_number)
-
+        
+    def compute_likelihood(self, action, observation, prior, iteration_number=None, nested=False):
+        last_observation = self.history.get_last_observation()
+        offer_likelihood = np.empty_like(prior)
+        original_threshold = self.opponent_model.threshold
+        self.opponent_model.belief.update_distribution(last_observation, action, iteration_number - 1, nested)
+        if self.include_persona_inference:
+            for i in range(len(self.support)):
+                theta = self.support[i]
+                # No special case for 0.0 — zero-threshold Receiver accepts everything, not random
+                self.opponent_model.threshold = theta
+                actions, q_values, softmax_transformation, mcts_tree = \
+                    self.opponent_model.forward(last_observation, action, iteration_number - 1, False)
+                observation_probability = softmax_transformation[
+                    np.where(self.opponent_model.potential_actions == observation.value)]
+                offer_likelihood[i] = observation_probability
+            self.opponent_model.threshold = original_threshold
+            return offer_likelihood
+        return None
 
 class DoMTwoSenderEnvironmentModel(DoMOneSenderEnvironmentModel):
     """
