@@ -31,6 +31,38 @@ class DoMOneBelief(DoMZeroBelief):
         self.belief_distribution['zero_order_belief'] = self.belief_distribution['zero_order_belief'][0:size,]
         self.belief_distribution['nested_beliefs'] = self.belief_distribution['nested_beliefs'][0:size,]
 
+    def _extract_prior(self):
+        """Always returns a clean 1D numeric array regardless of storage format.
+        Handles plain dicts, nested dicts, and numpy object arrays (produced when
+        step_from_is incorrectly calls np.vstack on two dicts, yielding an object
+        array whose elements are dicts rather than numbers).
+        """
+        bd = self.belief_distribution
+        # 1. Unwrap dict wrappers
+        while isinstance(bd, dict):
+            bd = bd.get("zero_order_belief", next(iter(bd.values())))
+        # 2. Safety net: handle numpy object arrays containing dicts
+        bd = np.asarray(bd)
+        if bd.dtype == object:
+            for item in bd.flat:
+                if isinstance(item, dict):
+                    inner = item.get("zero_order_belief", next(iter(item.values())))
+                    while isinstance(inner, dict):
+                        inner = inner.get("zero_order_belief", next(iter(inner.values())))
+                    bd = np.asarray(inner, dtype=float)
+                    break
+                elif isinstance(item, np.ndarray) and item.dtype != object:
+                    bd = item.astype(float)
+                    break
+            else:
+                raise ValueError(
+                    f"_extract_prior: cannot extract numeric data from object array: {bd}")
+        else:
+            bd = bd.astype(float)
+        if bd.ndim == 1:
+            return bd
+        return bd[-1, :]
+
     def update_distribution(self, action, observation, iteration_number, nested=False):
         """
         Update the belief based on the last action and observation (IRL)
@@ -42,13 +74,8 @@ class DoMOneBelief(DoMZeroBelief):
         """
         if iteration_number < 1:
             return None
-        
-        # Check if it is a dict or if it was squashed into an array by the S2 simulation
-        zob = self.belief_distribution
-        while isinstance(zob, dict):
-            zob = zob.get("zero_order_belief", list(zob.values())[0])
 
-        prior = np.copy(np.atleast_2d(zob)[-1, :])
+        prior = self._extract_prior()
         prior = np.squeeze(prior)
 
         likelihood = self.compute_likelihood(action, observation, prior, iteration_number, nested)
@@ -411,8 +438,7 @@ class DoMOneSender(DoMZeroSender):
                              nested_model)
         self.name = "DoM(1)_sender"
     
-    @staticmethod
-    def get_aleph_mechanism_status():
+    def get_aleph_mechanism_status(self, full=False):
         return False
 
     def update_nested_models(self, action=None, observation=None, iteration_number=None):
@@ -646,7 +672,7 @@ class DoMOneReceiver(DoMZeroReceiver):
         self.name = "DoM(1)_receiver"
 
     @staticmethod
-    def get_aleph_mechanism_status():
+    def get_aleph_mechanism_status(full=False):
         # DoM(1) Receiver does not trigger the breakdown policy itself
         return False
 

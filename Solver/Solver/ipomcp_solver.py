@@ -53,7 +53,7 @@ class IPOMCP:
     @staticmethod
     def compute_number_of_planning_iterations(number_of_iterations, nested_model):
         if nested_model:
-            return 10000
+            return max(50, number_of_iterations // 10)
         return number_of_iterations
 
     def reset(self, iteration_number: int):
@@ -93,7 +93,9 @@ class IPOMCP:
         if not q_values.empty:
             return self.history_node.children, None, np.c_[q_values, np.repeat(10, q_values.shape[0])]
         if not self.nested_model:
-            print(f'Empty Q-value data, iteration: {iteration_number}')
+            agent_type = "Sender" if self.inference_level % 2 == 1 else "Receiver"
+            display_trial = iteration_number - 1 if self.nested_model is False and iteration_number > 0 else iteration_number
+            print(f'[{agent_type} DoM({self.inference_level}) MCTS] Trial: {display_trial}', flush=True)
         self.action_exploration_policy.update_belief(self.root_sampling.belief_distribution)
         # Compute belief distribution
         belief_distribution = np.array(x[0] for x in root_samples)
@@ -109,12 +111,15 @@ class IPOMCP:
             iteration_times, depth_statistics = self.tree_traverse(iteration_number, action_length, observation_length,
                                                                    filtered_root_samples)
             # Q(Accept, Reject) as DoM(0):
-            immediate_reward = self.environment_simulator.reward_function(counter_offer.value, True)
+            immediate_reward = self.environment_simulator.reward_function(counter_offer.value, True) \
+                if counter_offer.value is not None else 0.0
             future_discounted_reward = np.sum(np.power(self.discount_factor, np.arange(iteration_number + 1,
                                                                                        self.config.task_duration)) * 0.5)
             random_q_values = np.array([immediate_reward + future_discounted_reward, future_discounted_reward])
-            mixed_q_values = (1-p_random) * self.history_node.children_qvalues[:, 1] + p_random * random_q_values
-            self.history_node.children_qvalues[:, 1] = mixed_q_values
+            if random_q_values.shape[0] == self.history_node.children_qvalues[:, 1].shape[0]:
+                mixed_q_values = (1-p_random) * self.history_node.children_qvalues[:, 1] + p_random * random_q_values
+                self.history_node.children_qvalues[:, 1] = mixed_q_values
+            # else: skip mixing — agent is a Sender with 11 actions, random mixing not applicable
         self.environment_simulator.reset_persona(current_opponent_persona, action_length, observation_length,
                                                  self.root_sampling.opponent_model.belief.belief_distribution,
                                                  iteration_number)
@@ -321,7 +326,3 @@ class IPOMCP:
         if nested:
             return float(int(self.config.get_from_env("planning_depth")) / 2)
         return float(self.config.get_from_env("planning_depth"))
-
-
-
-

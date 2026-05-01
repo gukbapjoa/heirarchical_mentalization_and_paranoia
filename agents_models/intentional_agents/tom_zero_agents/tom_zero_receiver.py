@@ -139,8 +139,12 @@ class DoMZeroAlephMechanism:
                                     np.transpose(softmax_transformation))
         # Need to fins a way to compute SE
         mean_offer = np.matmul(offer_likelihood, self.observations)
+        diff = self.observations[:, np.newaxis] - mean_offer
+        if np.any(np.abs(diff) > 1e6):
+            print(f"WARNING: overflow clipped in sigma_offer at trial {trial_number}", flush=True)
+        diff = np.clip(diff, -1e6, 1e6)
         sigma_offer = np.sqrt(
-            np.diag(np.dot(offer_likelihood, np.power(self.observations[:, np.newaxis] - mean_offer, 2))))
+            np.diag(np.dot(offer_likelihood, np.power(diff, 2))))
         bounds = np.array([expected_reward - sigma_offer * self.omega, expected_reward + sigma_offer * self.omega])
         is_observed_reward_in_bounds = np.logical_and(expected_observed_reward > bounds[0, :], expected_observed_reward < bounds[1, :])
         return is_observed_reward_in_bounds

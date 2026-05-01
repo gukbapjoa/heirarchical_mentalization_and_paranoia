@@ -160,6 +160,8 @@ class DoMZeroSender(DoMZeroModel):
             receiver_counter_action = observation
         else:
             receiver_counter_action = args[0]
+            
+        # print(f"DEBUG: type={type(self).__name__}, threshold={self.threshold}, action={action}")  # ADD THIS
         game_reward = (1 - action - self.threshold) * receiver_counter_action
         # self.history.rewards.append(game_reward)
         return game_reward

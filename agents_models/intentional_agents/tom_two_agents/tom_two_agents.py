@@ -404,19 +404,75 @@ class DoMTwoSenderEnvironmentModel(DoMOneSenderEnvironmentModel):
 
     def reset_persona(self, persona, action_length, observation_length,
                   nested_beliefs, iteration_number):
+
+        def sanitize(v, n):
+            """Recursively extract a 2D numeric array from any container."""
+            while isinstance(v, dict):
+                v = v.get("zero_order_belief", next(iter(v.values())))
+            v = np.array(v, dtype=float)
+            if v.ndim == 1:
+                v = v.reshape(1, -1)
+            return v[:n + 1, :]
+
+        n = iteration_number
         if isinstance(nested_beliefs, dict):
-            nested_beliefs_values = []
-            for x in nested_beliefs.values():
-                if isinstance(x, np.ndarray) and x.ndim >= 2:
-                    nested_beliefs_values.append(x[:iteration_number + 1, :])
-                else:
-                    nested_beliefs_values.append(x)  # 1D or dict: pass as-is
-            current_nested_beliefs = dict(zip(nested_beliefs.keys(), nested_beliefs_values))
+            zob = sanitize(nested_beliefs.get("zero_order_belief",
+                        next(iter(nested_beliefs.values()))), n)
+            nb  = sanitize(nested_beliefs.get("nested_beliefs",
+                        list(nested_beliefs.values())[-1]), n)
+            current_nested_beliefs = {"zero_order_belief": zob,
+                                    "nested_beliefs": nb}
         else:
-            current_nested_beliefs = nested_beliefs
+            zob = sanitize(nested_beliefs, n)
+            current_nested_beliefs = {"zero_order_belief": zob,
+                                    "nested_beliefs": zob}
+
         self.opponent_model.threshold = persona.persona[0]
-        self.opponent_model.reset(self.high, self.low, observation_length, action_length, False)
+        self.opponent_model.reset(self.high, self.low,
+                                observation_length, action_length, False)
         self.opponent_model.belief.belief_distribution = current_nested_beliefs
+
+    def step_from_is(self, new_interactive_state: InteractiveState,
+                 previous_observation: Action, action: Action,
+                 seed: int, iteration_number: int):
+        """Override DoMOneSenderEnvironmentModel.step_from_is.
+        The parent does np.vstack([dict, dict]) which silently produces a numpy
+        object array, corrupting DoMOneReceiver's belief distribution.
+        We update each dict key separately instead.
+        """
+        # Update nested history
+        if int(new_interactive_state.get_state.name) > 0:
+            self.opponent_model.history.update_observations(action)
+            self.opponent_model.opponent_model.history.update_actions(action)
+
+        obs_probs = self.opponent_model.softmax_transformation(
+            new_interactive_state.persona.q_values[:, 1])
+        rng = np.random.default_rng(seed)
+        idx = rng.choice(new_interactive_state.persona.q_values.shape[0], p=obs_probs)
+        new_observation = Action(bool(new_interactive_state.persona.q_values[idx, 0]), False)
+        observation_probability = obs_probs[idx]
+        expected_reward = self.compute_expected_reward(
+            action, previous_observation, new_observation, observation_probability)
+
+        # Update nested model history
+        self.opponent_model.history.update_actions(new_observation)
+        self.opponent_model.environment_model.opponent_model.history.update_observations(new_observation)
+
+        # Safely append to DoMOneReceiver's dict-format belief distribution
+        updated = new_interactive_state.get_nested_belief
+        bd = self.opponent_model.belief.belief_distribution
+        if isinstance(updated, dict) and isinstance(bd, dict):
+            for key in bd:
+                if key in updated:
+                    row = np.atleast_2d(updated[key])
+                    bd[key] = np.vstack([bd[key], row])
+        else:
+            # Fallback for plain arrays
+            self.opponent_model.belief.belief_distribution = np.vstack([bd, updated])
+
+        # DoMOneBelief does not track likelihood; omit that line from the parent
+        return new_observation, expected_reward, observation_probability
+
 
     def recall_opponents_actions_from_memory(self, key, iteration_number, action,
                                              observation, action_node, seed):

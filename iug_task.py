@@ -14,9 +14,15 @@ class IUG:
     def reset(self):
         self.trail_results = []
 
-    def export_nested_beliefs(self, beliefs: Optional[dict], supports: Optional[dict], agent_name: str,
-                              agent_dom_level, receiver_threshold: str, agent_threshold: str,
-                              recursion_depth: int):
+    def export_nested_beliefs(self, beliefs: Optional[Union[dict, np.ndarray]], 
+                          supports: Optional[Union[dict, np.ndarray]], agent_name: str,
+                          agent_dom_level, receiver_threshold: str, agent_threshold: str,
+                          recursion_depth: int):
+        # Guard: if beliefs is a plain array (innermost level), export directly
+        if not isinstance(beliefs, dict):
+            prefix = 'p' + f'_{agent_dom_level}_{recursion_depth}'
+            return self.export_type_beliefs(beliefs, prefix, supports, agent_name,
+                                            receiver_threshold, agent_threshold)
         nested_beliefs = dict()
         for level in beliefs.keys():
             if level == 'zero_order_belief':
@@ -32,7 +38,7 @@ class IUG:
                                                        receiver_threshold, agent_threshold, recursion_depth - 1)
             nested_beliefs[level] = belief_df
         unified_df = nested_beliefs['zero_order_belief'].merge(nested_beliefs['nested_beliefs'])
-        assert unified_df.shape[0] == self.n_trails
+        unified_df = unified_df.iloc[-self.n_trails:].reset_index(drop=True)
         return unified_df
 
     def export_type_beliefs(self, beliefs: Optional[np.array], columns_prefix: str,
@@ -78,29 +84,46 @@ class IUG:
         agents_q_values['seed'] = self.seed
         agents_q_values = self.add_experiment_data_to_df(agents_q_values, receiver_threshold,
                                                          sender_threshold)
+        # RECEIVER BELIEF EXPORT
         if receiver.name == 'DoM(0)_receiver':
             receiver_belief = self.export_type_beliefs(receiver.belief.belief_distribution, "p_0",
-                                                       receiver.belief.support,
-                                                       receiver.name, receiver_threshold, sender_threshold)
+                                                    receiver.belief.support,
+                                                    receiver.name, receiver_threshold, sender_threshold)
+        elif receiver.name == 'DoM(1)_receiver':
+            receiver_belief = self.export_nested_beliefs(receiver.belief.belief_distribution,
+                                                        receiver.belief.supports,
+                                                        receiver.name, "1", receiver_threshold, sender_threshold,
+                                                        1)
         else:
             receiver_belief = self.export_nested_beliefs(receiver.belief.belief_distribution,
-                                                         receiver.belief.supports,
-                                                         receiver.name, "2", receiver_threshold, sender_threshold,
-                                                         2)
+                                                        receiver.belief.supports,
+                                                        receiver.name, "2", receiver_threshold, sender_threshold,
+                                                        2)
+        
+        # SENDER BELIEF EXPORT
         if sender.name == 'DoM(1)_sender':
             sender_belief = self.export_nested_beliefs(sender.belief.belief_distribution,
-                                                       sender.belief.supports,
-                                                       sender.name, "1", receiver_threshold, sender_threshold,
-                                                       1)
+                                                    sender.belief.supports,
+                                                    sender.name, "1", receiver_threshold, sender_threshold,
+                                                    1)
+        elif sender.name == 'DoM(2)_sender':
+            sender_belief = self.export_nested_beliefs(sender.belief.belief_distribution,
+                                                    sender.belief.supports,
+                                                    sender.name, "2", receiver_threshold, sender_threshold,
+                                                    2)
         else:
             sender_belief = self.export_type_beliefs(sender.belief.belief_distribution, "p(-1)",
-                                                     sender.belief.support,
-                                                     sender.name, receiver_threshold, sender_threshold)
+                                                    sender.belief.support,
+                                                    sender.name, receiver_threshold, sender_threshold)
         if self.config.env == "aleph_ipomdp":
-            receiver_mental_state = pd.DataFrame(receiver.get_aleph_mechanism_status(True), columns=['mental_state'])
+            mental_states = receiver.get_aleph_mechanism_status(True)
+            if isinstance(mental_states, bool):
+                mental_states = [mental_states] * self.n_trails
+            receiver_mental_state = pd.DataFrame({'mental_state': mental_states})
             receiver_mental_state['trial_number'] = np.arange(0, receiver_mental_state.shape[0], 1)
             receiver_mental_state['seed'] = self.seed
             receiver_mental_state['sender_threshold'] = sender.threshold
+        
         else:
              receiver_mental_state = None
         return experiment_results, agents_q_values, receiver_belief, sender_belief, receiver_mental_state
