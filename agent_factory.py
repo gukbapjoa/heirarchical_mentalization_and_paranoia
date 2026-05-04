@@ -38,6 +38,54 @@ class AgentFactory:
         thresholds_probabilities = np.repeat(1 / len(support), len(support))
         return np.array([support, thresholds_probabilities]).T
 
+    def _setup_mixed_model(self, agent, agent_role):
+        """
+        If use_mixed_model_view is True, attach:
+        - level_distribution to the agent's belief (flat prior over levels)
+        - opponent_models dict to the agent's environment_model
+        so the IPOMCP solver can swap opponent models during tree traversal.
+        Does nothing if use_mixed_model_view is False.
+        """
+        if not bool(self.config.get_from_general("use_mixed_model_view")):
+            return agent
+
+        if agent_role == "rational_sender":
+            if isinstance(agent, DoMTwoSender):
+                # S2 normally models R1. In mixed view: also considers R0.
+                r0 = self.dom_zero_constructor("rational_receiver")
+                agent.belief.level_distribution = {0: 0.5, 1: 0.5}
+                agent.environment_model.opponent_models = {
+                    0: r0,
+                    1: agent.opponent_model   # DoMOneReceiver
+                }
+            elif isinstance(agent, DoMOneSender):
+                # S1 normally models R0. In mixed view: also considers R-1.
+                r_minus_1 = self.dom_minus_one_constructor("rational_receiver")
+                agent.belief.level_distribution = {-1: 0.5, 0: 0.5}
+                agent.environment_model.opponent_models = {
+                    -1: r_minus_1,
+                    0: agent.opponent_model   # DoMZeroReceiver
+                }
+        else:
+            if isinstance(agent, DoMTwoReceiver):
+                # R2 normally models S1. In mixed view: also considers S0.
+                s0 = self.dom_zero_constructor("rational_sender")
+                agent.belief.level_distribution = {0: 0.5, 1: 0.5}
+                agent.environment_model.opponent_models = {
+                    0: s0,
+                    1: agent.opponent_model   # DoMOneSender
+                }
+            elif isinstance(agent, DoMOneReceiver):
+                # R1 normally models S0. In mixed view: also considers S-1.
+                s_minus_1 = self.dom_minus_one_constructor("rational_sender")
+                agent.belief.level_distribution = {-1: 0.5, 0: 0.5}
+                agent.environment_model.opponent_models = {
+                    -1: s_minus_1,
+                    0: agent.opponent_model   # DoMZeroSender
+                }
+
+        return agent
+
     def constructor(self, agent_role: str, agent_dom_level: str = None):
         agent = None
         if agent_dom_level is None:
@@ -101,7 +149,8 @@ class AgentFactory:
             output_agent = DoMOneReceiver(self.subject_actions, self.config.softmax_temperature, None,
                                       memoization_table, opponent_theta_hat_distribution, opponent_model,
                                       self.config.seed, int(self.task_duration), nested)    
-            
+             
+        self._setup_mixed_model(output_agent, agent_role)
         return output_agent
     
 
@@ -125,5 +174,5 @@ class AgentFactory:
                                       memoization_table, opponent_theta_hat_distribution,
                                       opponent_model, self.config.seed, self.task_duration)
         
+        self._setup_mixed_model(output_agent, agent_role)
         return output_agent
-

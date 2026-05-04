@@ -54,6 +54,7 @@ class IPOMCP:
     def compute_number_of_planning_iterations(number_of_iterations, nested_model):
         if nested_model:
             return max(50, number_of_iterations // 10)
+            # return 10000 for final runs, reduced for testing
         return number_of_iterations
 
     def reset(self, iteration_number: int):
@@ -151,11 +152,26 @@ class IPOMCP:
         disable_printing = self.config.disable_print_loop or self.nested_model
         q_values_table = np.empty((1000, 3))
         for i in tqdm(range(len(root_samples)), disable=disable_printing):
-            persona = Persona(root_samples[i], None)
+            sample = root_samples[i]
+
+            # Mixed model view: sample is (level, threshold, mental_state)
+            # Standard view:    sample is (threshold, mental_state)
+            if len(sample) == 3:
+                level, threshold, mental_state = sample
+                # Swap the opponent model to the one matching the sampled level
+                if (hasattr(self.environment_simulator, 'opponent_models') and
+                        self.environment_simulator.opponent_models is not None and
+                        level in self.environment_simulator.opponent_models):
+                    self.environment_simulator.opponent_model = \
+                        self.environment_simulator.opponent_models[level]
+                persona = Persona((threshold, mental_state), None)
+            else:
+                persona = Persona(sample, None)
+
             self.environment_simulator.reset_persona(persona,
-                                                     action_length, observation_length,
-                                                     self.root_sampling.opponent_model.belief.belief_distribution,
-                                                     iteration_number)
+                                                    action_length, observation_length,
+                                                    self.root_sampling.opponent_model.belief.belief_distribution,
+                                                    iteration_number)
             nested_belief = self.environment_simulator.opponent_model.belief.get_current_belief()
             nested_likelihood = getattr(self.environment_simulator.opponent_model.belief, 'likelihood', None)
             interactive_state = InteractiveState(State(str(iteration_number), False), persona, nested_belief, nested_likelihood)

@@ -124,7 +124,9 @@ class DoMTwoBelief(DoMOneBelief):
 
     def sample(self, rng_key, n_samples):
         """
-        Sample nested beliefs
+        Sample nested beliefs.
+        If use_mixed_model_view is True and level_distribution is set,
+        returns (level, threshold, mental_state) 3-tuples.
         :param rng_key:
         :param n_samples:
         :return:
@@ -132,9 +134,18 @@ class DoMTwoBelief(DoMOneBelief):
         probabilities = self.belief_distribution['zero_order_belief'][-1, :]
         rng_generator = np.random.default_rng(rng_key)
         idx = rng_generator.choice(self.belief_distribution['zero_order_belief'].shape[1], size=n_samples,
-                                   p=probabilities)
+                                p=probabilities)
         particles = self.support[idx]
         mental_state = [False] * n_samples
+
+        # Mixed model view: also sample a DoM level
+        use_mixed = bool(self.config.get_from_general("use_mixed_model_view"))
+        if use_mixed and hasattr(self, 'level_distribution') and self.level_distribution is not None:
+            level_keys = list(self.level_distribution.keys())
+            level_probs = list(self.level_distribution.values())
+            levels = rng_generator.choice(level_keys, size=n_samples, p=level_probs)
+            return list(zip(levels, particles, mental_state))
+
         return list(zip(particles, mental_state))
 
     def reset(self, size: int = 1):

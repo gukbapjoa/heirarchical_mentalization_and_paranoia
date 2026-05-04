@@ -11,9 +11,10 @@ general:
   sender_thresholds: [0.0,0.1,0.5]
   receiver_thresholds: [0.0,0.35]
   aleph_ipomdp_awareness: True
+  use_mixed_model_view: False       # If True, agents hold beliefs over opponent DoM level AND threshold
   strong_typicality_delta: 0.5
   expected_reward_omega: 1.5
-  state: debug                            # debug for dyad, simulation for full
+  state: debug                      # debug for dyad, simulation for full
   use_memoization: False
 
 environments:
@@ -34,7 +35,7 @@ environments:
     planning_depth: 12
     uct_exploration_bonus: 7.0
     rollout_rejecting_bonus: 0.5
-    mcts_number_of_iterations: 50
+    mcts_number_of_iterations: 50         # Reduced for testing; increase to 25000 for final runs 
     discount_factor: 0.99
     endowment: 1.0
     break_down_policy: True               # Check

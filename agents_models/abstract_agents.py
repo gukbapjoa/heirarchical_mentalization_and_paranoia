@@ -118,6 +118,9 @@ class DoMZeroBelief(BeliefDistribution):
         """
         super().__init__(support, zero_level_belief, opponent_model, history)
         self.opponent_belief = None
+        # Mixed model view: dict mapping DoM level (int) -> probability.
+        # e.g. {-1: 0.5, 1: 0.5}. None means standard single-level behaviour.
+        self.level_distribution = None
 
     def reset(self, size=1):
         self.belief_distribution = self.belief_distribution[0:size,]
@@ -151,6 +154,13 @@ class DoMZeroBelief(BeliefDistribution):
         probabilities = self.belief_distribution[:, -1]
         rng_generator = np.random.default_rng(rng_key)
         particles = rng_generator.choice(self.belief_distribution[:, 0], size=n_samples, p=probabilities)
+        # Mixed model view: also sample a DoM level if enabled
+        use_mixed = bool(self.config.get_from_general("use_mixed_model_view"))
+        if use_mixed and hasattr(self, 'level_distribution') and self.level_distribution is not None:
+            level_keys = list(self.level_distribution.keys())
+            level_probs = list(self.level_distribution.values())
+            levels = rng_generator.choice(level_keys, size=n_samples, p=level_probs)
+            return list(zip(levels, particles))
         return particles
 
     def reset_belief(self, iteration_number, action_length, observation_length):
@@ -172,6 +182,10 @@ class DoMZeroEnvironmentModel(EnvironmentModel):
         self.opponent_model = opponent_model
         self.low = low
         self.high = high
+        # Mixed model view: dict mapping DoM level (int) -> opponent model instance.
+        # Populated by agent_factory when use_mixed_model_view is True.
+        # Defaults to None (standard single-model behaviour).
+        self.opponent_models = None
 
     def update_parameters(self):
         pass
